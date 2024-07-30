@@ -1,0 +1,8 @@
+version: "3.9"
+services:
+  openmedata-base:
+    image: xubiao05/ekuiper-base:1.0.0
+    container_name: ekuiper-base
+    restart: always
+    volumes:
+      - ./:/app:rw

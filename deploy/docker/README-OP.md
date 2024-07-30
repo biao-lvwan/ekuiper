@@ -1,0 +1,1 @@
+docker build -t xubiao05/ekuiper:1.0.0 -f Dockerfile .

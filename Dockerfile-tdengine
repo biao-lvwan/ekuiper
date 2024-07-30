@@ -1,0 +1,92 @@
+FROM alpine:edge AS builder
+ENV GOPROXY=https://goproxy.cn,direct
+ARG TARGETARCH
+ARG TDENGINE_VERSION="ver-3.1.1.12"
+
+RUN sed -e 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' -i~ /etc/apk/repositories
+RUN apk add --no-cache -U tzdata git zip bash build-base automake autoconf cmake musl-dev libtool go linux-headers argp-standalone bash apr-util-dev jansson-dev xz-dev xz-libs libunwind-dev zeromq-dev
+
+ENV TZ="Asia/Shanghai"
+RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+ENV LC_CTYPE="en_US.UTF-8"
+
+ADD  . /go/kuiper
+
+WORKDIR /go/kuiper
+
+ENV LC_CTYPE="en_US.UTF-8"
+
+#RUN git clone https://github.com/taosdata/TDengine.git -b ${TDENGINE_VERSION}  \
+#RUN cd TDengine \
+#  && ./build.sh \
+#  && cd ./debug && make install/local
+
+RUN make build_with_edgex
+RUN make plugins
+
+FROM alpine:edge
+
+RUN sed -e 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' -i~ /etc/apk/repositories
+RUN apk add --no-cache -U tzdata zeromq libunwind-dev
+ENV TZ="Asia/Shanghai"
+RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib"
+ENV LC_CTYPE="en_US.UTF-8"
+
+# Set environment vars
+ENV MAINTAINER="EdgeGo" \
+    KUIPER_HOME="/kuiper" \
+    KUIPER__BASIC__CONSOLELOG=true
+
+# These vars are not persisted in the final image layer
+ARG KUIPER_USER="kuiper"
+ARG KUIPER_USER_ID="1001"
+
+WORKDIR ${KUIPER_HOME}
+
+# Set appropriate ownership to allow binary full access to KUIPER_HOME dir
+RUN adduser -DH -s /sbin/nologin -u ${KUIPER_USER_ID} ${KUIPER_USER} && \
+ chown -Rh ${KUIPER_USER}:${KUIPER_USER} ${KUIPER_HOME} && \
+    mkdir -p /usr/local/taos && \
+    chown -Rh ${KUIPER_USER}:${KUIPER_USER} /usr/local/taos && \
+    mkdir -p /var/log/taos && \
+    chmod 777 /var/log/taos && \
+    chown -Rh ${KUIPER_USER}:${KUIPER_USER} /var/log/taos && \
+    mkdir -p  /var/lib/taos && \
+    chmod 777 /var/lib/taos && \
+    chown -Rh ${KUIPER_USER}:${KUIPER_USER} /var/lib/ /var/lib/taos
+
+COPY --chown=${KUIPER_USER}:${KUIPER_USER} --from=builder /usr/local/taos /usr/local/taos
+COPY --chown=${KUIPER_USER}:${KUIPER_USER} --from=builder /usr/local/taos/include/tao*.h  /usr/include/
+
+RUN ln -s /usr/local/taos/driver/libtaos.* /usr/lib/libtaos.so.1
+RUN ln -s /usr/local/taos/driver/libtaos.so.1 /usr/lib/libtaos.so
+
+RUN if [ -d /usr/lib64 ]; then   \
+        ln -s /usr/local/taos/driver/libtaos.* /usr/lib64/libtaos.so.1 ; \
+        ln -s /usr/local/taos/driver/libtaos.so.1 /usr/lib64/libtaos.so ;\
+    fi
+
+RUN ldconfig /usr/lib /usr/lib64 /usr/local/lib /usr/local/taos/driver
+
+# Run the kuiper process under the kuiper user
+USER ${KUIPER_USER}
+
+COPY --chown=${KUIPER_USER}:${KUIPER_USER} ./deploy/docker/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+COPY --chown=${KUIPER_USER}:${KUIPER_USER} --from=builder /go/kuiper/_build/kuiper-* /kuiper/
+COPY --chown=${KUIPER_USER}:${KUIPER_USER} --from=builder /go/kuiper/extensions/sinks/ /kuiper/plugins/sinks/
+
+RUN ln -s /kuiper/plugins/sinks/image/image@1.11.5.so  /kuiper/plugins/sinks/image.so
+RUN ln -s /kuiper/plugins/sinks/influx/influx@1.11.5.so  /kuiper/plugins/sinks/influx.so
+RUN ln -s /kuiper/plugins/sinks/influx2/influx2@1.11.5.so  /kuiper/plugins/sinks/influx2.so
+RUN ln -s /kuiper/plugins/sinks/kafka/kafka@1.11.5.so  /kuiper/plugins/sinks/kafka.so
+RUN ln -s /kuiper/plugins/sinks/sql/sql@1.11.5.so  /kuiper/plugins/sinks/sql.so
+RUN ln -s /kuiper/plugins/sinks/tdengine/tdengine@1.11.5.so  /kuiper/plugins/sinks/tdengine.so
+RUN ln -s /kuiper/plugins/sinks/zmq/zmq@1.11.5.so  /kuiper/plugins/sinks/zmq.so
+
+VOLUME ["${KUIPER_HOME}/etc", "${KUIPER_HOME}/data", "${KUIPER_HOME}/plugins", "${KUIPER_HOME}/log"]
+EXPOSE 9081 20498
+
+ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
+
+CMD ["./bin/kuiperd"]

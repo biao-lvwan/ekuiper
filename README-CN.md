@@ -180,8 +180,9 @@ eKuiper 可以运行在各类物联网的边缘使用场景中，比如，
 
 + Go version >= 1.22
 
-#### 编译
-
+#### 编译,可以启动如下命令
+$ cd _build/kuiper-x.x.x-linux-amd64/
+$ bin/kuiperd
 + 编译二进制：
 
   - 编译二进制文件: `$ make`
